@@ -63,7 +63,6 @@ class ZwiftRide extends ZwiftDevice {
     switch (opcode) {
       case Opcode.RIDE_ON:
         //print("Empty RideOn response - unencrypted mode");
-
         break;
       case Opcode.STATUS_RESPONSE:
         final status = StatusResponse.fromBuffer(message);

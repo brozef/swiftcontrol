@@ -198,6 +198,9 @@ abstract class BluetoothDevice extends BaseDevice {
       (c) => c.uuid == BleUuid.DEVICE_INFORMATION_CHARACTERISTIC_BATTERY_LEVEL.toLowerCase(),
     );
     if (batteryCharacteristic != null) {
+
+      await UniversalBle.subscribeNotifications(device.deviceId, batteryService!.uuid, batteryCharacteristic.uuid);
+
       final batteryData = await UniversalBle.read(
         device.deviceId,
         batteryService!.uuid,

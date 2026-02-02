@@ -9,6 +9,8 @@ import 'package:bike_control/pages/markdown.dart';
 import 'package:bike_control/utils/core.dart';
 import 'package:bike_control/utils/i18n_extension.dart';
 import 'package:bike_control/widgets/ui/warning.dart';
+import 'package:universal_ble/universal_ble.dart';
+
 
 class ZwiftClickV2 extends ZwiftRide {
   ZwiftClickV2(super.scanResult)
@@ -41,8 +43,13 @@ class ZwiftClickV2 extends ZwiftRide {
 
   @override
   Future<void> setupHandshake() async {
-    super.setupHandshake();
-    await sendCommandBuffer(Uint8List.fromList([0xFF, 0x04, 0x00]));
+    await UniversalBle.write(
+      device.deviceId,
+      customService!.uuid,
+      syncRxCharacteristic!.uuid,
+      ZwiftConstants.RIDE_ON_V2,
+      withoutResponse: true,
+    );
   }
 
   @override
