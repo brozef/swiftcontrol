@@ -11,6 +11,9 @@ import 'package:prop/emulators/ftms_emulator.dart';
 import 'package:prop/prop.dart';
 import 'package:shadcn_flutter/shadcn_flutter.dart';
 import 'package:universal_ble/universal_ble.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
 
 final FtmsEmulator ftmsEmulator = FtmsEmulator();
 
@@ -56,10 +59,13 @@ class ZwiftClickV2 extends ZwiftRide {
     return lastUnlock > DateTime.now().subtract(const Duration(days: 1));
   }
 
+  var zwiftToken = '';
   @override
   Future<void> setupHandshake() async {
     if (isUnlocked) {
       super.setupHandshake();
+    } else {
+      zwiftToken = await getZwiftToken();
     }
   }
 
@@ -73,7 +79,95 @@ class ZwiftClickV2 extends ZwiftRide {
   Future<void> processCharacteristic(String characteristic, Uint8List bytes) async {
     if (!ftmsEmulator.processCharacteristic(characteristic, bytes)) {
       await super.processCharacteristic(characteristic, bytes);
+
+      if (characteristic.contains("02-19ca-4651-86e5-fa29dcdd09d1")) {
+        String val = bytes.map((e) => e.toRadixString(16).padLeft(2, '0')).join("");
+        if (val.startsWith("ff03000a21"))
+        {
+          if (bytes.length == 85)
+          {
+            await UniversalBle.write(
+              device.deviceId,
+              customService!.uuid,
+              syncRxCharacteristic!.uuid,
+              Uint8List.fromList([0xFF, 0x04, 0x00]),
+              withoutResponse: true,
+            );
+          }
+          else
+          {
+            final payload = await proxyAuthToZwift(bytes, zwiftToken);
+            await UniversalBle.write(
+              device.deviceId,
+              customService!.uuid,
+              syncRxCharacteristic!.uuid,
+              payload,
+              withoutResponse: true,
+            );
+          }
+        }
+      }
     }
+  }
+
+
+  final ZWIFT_USER = "email";
+  final ZWIFT_PASS = "password";
+  final GLOBAL_MACHINE_ID = sha256.convert(utf8.encode("bikecontrol-zwift-proxy")).toString().substring(0, 32);
+
+  Future<String> getZwiftToken() async  {
+      final res = await http.post(
+        Uri.parse('https://secure.zwift.com/auth/realms/zwift/tokens/access/codes'),
+        headers: <String, String>{ 'User-Agent': 'Zwift/1.5 (iPhone; iOS 9.0.2; Scale/2.00)', 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: <String, String> {
+          "client_id": "Zwift_Mobile_Link",
+          "username": ZWIFT_USER,
+          "password": ZWIFT_PASS,
+          "grant_type": "password"
+        }
+      );
+
+      if (res.statusCode < 400 && res.bodyBytes.isNotEmpty) {
+        final jsonRes = jsonDecode(res.body) as Map<String, dynamic>;
+        if (jsonRes["access_token"] != null) {
+          return jsonRes["access_token"];
+        }
+
+        throw Exception('Unable to authenticate with zwift servers - missing access token');
+      }
+
+      throw Exception('Unable to authenticate with zwift servers - invalid responce');
+  }
+
+  Future<Uint8List> proxyAuthToZwift(Uint8List payload, String token) async {
+      final pLen = payload.length;
+      var offsetsToTry = [];
+      final offsetMemory = {};
+      
+      if (offsetMemory.containsKey(pLen)) offsetsToTry.add(offsetMemory[pLen]);
+      for (var i = 0; i < 15; i++) { if (payload[i] == 0x0a) offsetsToTry.add(i); }
+      for (var o in [3, 4, 2, 5]) { if (!offsetsToTry.contains(o)) { offsetsToTry.add(o); } };
+
+      for (final offset in offsetsToTry) {
+        final cleanPayload = payload.slice(offset);
+        final res = await http.post(
+          Uri.parse('https://us-or-rly101.zwift.com/api/d-lock-service/device/authenticate'),
+          headers: <String, String>{ 
+            "Content-Type": "application/x-protobuf-lite",
+            "Authorization": 'Bearer $token', 
+            "X-Machine-Id": GLOBAL_MACHINE_ID
+          },
+          body: cleanPayload
+        );
+        if (res.statusCode == 200) {
+          if (!offsetMemory.containsKey(pLen)) offsetMemory[pLen] = offset;
+          return Uint8List.fromList([0xff, 04, 0x00, ...res.bodyBytes]);
+        } else {
+          continue; 
+        }
+      }
+
+      throw Exception('Unable to authenticate with zwift servers');
   }
 
   @override
