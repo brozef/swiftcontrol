@@ -14,6 +14,7 @@ import 'package:universal_ble/universal_ble.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:crypto/crypto.dart';
+import 'dart:io';
 
 final FtmsEmulator ftmsEmulator = FtmsEmulator();
 
@@ -64,8 +65,8 @@ class ZwiftClickV2 extends ZwiftRide {
   Future<void> setupHandshake() async {
     if (isUnlocked) {
       super.setupHandshake();
-    } else if (ZWIFT_PASS != '' && ZWIFT_USER != '') {
-      //zwift user info available, try auto unlock
+    } else {
+      //try auto unlock
       zwiftToken = await getZwiftToken();
       if (zwiftToken != '') {
         super.setupHandshake();
@@ -111,6 +112,8 @@ class ZwiftClickV2 extends ZwiftRide {
                 payload,
                 withoutResponse: true,
               );
+
+              propPrefs.setZwiftClickV2LastUnlock(scanResult.deviceId, DateTime.now());
             }
           }
         }
@@ -119,11 +122,20 @@ class ZwiftClickV2 extends ZwiftRide {
   }
 
 
-  final ZWIFT_USER = "email";
-  final ZWIFT_PASS = "password";
+  var ZWIFT_USER = "";
+  var ZWIFT_PASS = "";
   final GLOBAL_MACHINE_ID = sha256.convert(utf8.encode("bikecontrol-zwift-proxy")).toString().substring(0, 32);
 
   Future<String> getZwiftToken() async  {
+      
+      if (ZWIFT_USER == "") {
+        final file = File('zwiftcreds.json');
+        final contents = await file.readAsString();
+        final json = jsonDecode(contents) as Map<String, dynamic>;
+        ZWIFT_USER = json["username"];
+        ZWIFT_PASS = json["password"];
+      }
+
       final res = await http.post(
         Uri.parse('https://secure.zwift.com/auth/realms/zwift/tokens/access/codes'),
         headers: <String, String>{ 'User-Agent': 'Zwift/1.5 (iPhone; iOS 9.0.2; Scale/2.00)', 'Content-Type': 'application/x-www-form-urlencoded' },
